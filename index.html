@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f4ed">
+  <meta name="description" content="按周二、周四、周六听写雅思词汇，周日抽查，智能整理错词并追踪复习次数。">
+  <title>拾词 · 雅思听写计划</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Noto+Sans+SC:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+  <script src="./core.js?v=20261124-1" defer></script>
+  <script src="./book-data.js" defer></script>
+  <script src="./voice-config.js" defer></script>
+  <script src="./app.js?v=20261124-1" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand"><span class="brand-mark">拾<span>·</span></span><div><strong>拾词</strong><small>WORD STUDIO</small></div></div>
+      <div class="side-label">学习空间</div>
+      <nav class="nav-list">
+        <button class="nav-item active" data-view="home"><span class="nav-icon">◫</span> 今日计划</button>
+        <button class="nav-item" data-view="focus"><span class="nav-icon">◎</span> 重点复习 <span id="focus-nav-count" class="nav-count">0</span></button>
+        <button class="nav-item" data-view="schedule"><span class="nav-icon">▦</span> 听写日历</button>
+        <button class="nav-item" data-view="library"><span class="nav-icon">▤</span> 词表管理</button>
+      </nav>
+      <div class="sidebar-bottom"><span class="sidebar-spark">✦</span><p>每天一点，<br>让单词真正留下来。</p><small>学习记录保存在这台设备的浏览器中</small></div>
+    </aside>
+
+    <div class="main-area">
+      <header class="topbar"><button id="mobile-menu" class="icon-button mobile-menu" aria-label="打开菜单">☰</button><div class="breadcrumb">我的学习空间 <span>/</span> <b id="breadcrumb-current">今日计划</b></div><div class="top-right"><span id="today-label" class="today-label"></span><span class="avatar">S</span></div></header>
+      <main id="view-root" tabindex="-1"></main>
+    </div>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <div id="modal-root"></div>
+</body>
+</html>

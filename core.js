@@ -19,6 +19,12 @@
     return dateKey(addDays(date, -(date.getDay() + 6) % 7));
   }
   function sundayKey(weekKey) { return dateKey(addDays(parseDate(weekKey), 6)); }
+  function makeupStatus(scheduledKey, todayKey, makeups = {}) {
+    if (todayKey < scheduledKey) return 'future';
+    if (todayKey === scheduledKey) return 'today';
+    if (todayKey > dateKey(addDays(parseDate(scheduledKey), 2))) return 'expired';
+    return makeups[mondayKey(parseDate(scheduledKey))] ? 'used' : 'available';
+  }
   function listMeta(index) {
     return index < 42 ? { band: 6, list: index + 1 } : { band: 7, list: index - 41 };
   }
@@ -54,6 +60,18 @@
       sessions.push({ index, date: actualDate, regularDate, week: mondayKey(parseDate(actualDate)), lists });
     }
     return sessions;
+  }
+  function inferMakeups(sessions, completed) {
+    const makeups = {};
+    const finished = sessions.filter(session => Number.isFinite(Number(completed?.[session.index])) && Number(completed[session.index]) > 0)
+      .sort((a, b) => Number(completed[a.index]) - Number(completed[b.index]));
+    for (const session of finished) {
+      const completedAt = Number(completed[session.index]);
+      if (makeupStatus(session.date, dateKey(new Date(completedAt)), makeups) === 'available') {
+        makeups[session.week] = { sessionIndex: session.index, completedAt };
+      }
+    }
+    return makeups;
   }
   function migrateLegacyState(oldState) {
     if (oldState.scheduleVersion === 2) return oldState;
@@ -117,7 +135,11 @@
     }
     const sundays = { ...(imported.sundays || {}) };
     for (const [week, time] of Object.entries(current.sundays || {})) sundays[week] = Math.max(Number(sundays[week]) || 0, Number(time) || 0);
-    return { ...imported, stats, completedLists, completed, sundays, run: null };
+    const makeups = { ...(imported.makeups || {}) };
+    for (const [week, record] of Object.entries(current.makeups || {})) {
+      if (!makeups[week] || Number(record.completedAt) < Number(makeups[week].completedAt)) makeups[week] = record;
+    }
+    return { ...imported, stats, completedLists, completed, sundays, makeups, run: null };
   }
   function normalizeAnswer(value) {
     return String(value || '').normalize('NFKC').trim().toLowerCase().replace(/\s+/g, ' ').replace(/[’‘]/g, "'");
@@ -230,6 +252,6 @@
     const peers = eligible.filter(w => (stats[w.id]?.reviewCount || 0) === threshold);
     return shuffle(before, random).concat(weightedSample(peers, Math.max(0, count - before.length), w => reviewWeight(w, stats), random)).slice(0, count);
   }
-  root.WordCore = { TOTAL_LISTS, TARGET_WORDS, parseDate, dateKey, addDays, mondayKey, sundayKey, listMeta, listIndex, labelForList, buildSessions, migrateLegacyState, mergeProgress, normalizeAnswer, parseLexicon, goalFor, weightedSample, shuffle, chooseDictationReviews, chooseSunday, chooseBooster };
+  root.WordCore = { TOTAL_LISTS, TARGET_WORDS, parseDate, dateKey, addDays, mondayKey, sundayKey, makeupStatus, inferMakeups, listMeta, listIndex, labelForList, buildSessions, migrateLegacyState, mergeProgress, normalizeAnswer, parseLexicon, goalFor, weightedSample, shuffle, chooseDictationReviews, chooseSunday, chooseBooster };
   if (typeof module !== 'undefined' && module.exports) module.exports = root.WordCore;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -8,9 +8,10 @@
     [6,3,'generate','产生；生成'],[6,3,'indicate','表明；指出'],[6,3,'maintain','维持；保养'],[6,3,'obtain','获得'],
     [6,4,'policy','政策'],[6,4,'require','要求；需要'],[6,4,'significant','重要的；显著的'],[6,4,'vary','变化；不同']
   ].map(([band,list,english,chinese]) => ({ id:`demo-${band}-${list}-${english}`,band,list,english,chinese }));
-  function blankState() { return { version:1, scheduleVersion:2, lexicon:window.BOOK_WORDS||[], source:'bundled', demo:false, startDate:'2026-11-17', dateOverrides:{0:'2026-11-18'}, scheduleAnchor:{index:2,date:'2026-11-24'}, stats:{}, completed:{}, completedLists:{}, sundays:{}, run:null, mode:'meaning', accent:'en-US', gender:'female', batchSize:50, lastSummary:null }; }
+  function blankState() { return { version:1, scheduleVersion:2, lexicon:window.BOOK_WORDS||[], source:'bundled', demo:false, startDate:'2026-11-17', dateOverrides:{0:'2026-11-18'}, scheduleAnchor:{index:2,date:'2026-11-24'}, stats:{}, completed:{}, completedLists:{}, sundays:{}, makeups:{}, run:null, mode:'meaning', accent:'en-US', gender:'female', batchSize:50, lastSummary:null }; }
   function prepareState(data) {
     let result={...blankState(),...data};
+    if(!result.makeups||typeof result.makeups!=='object'||Array.isArray(result.makeups))result.makeups={};
     if(data.startDate&&data.startDate!=='2026-11-17'&&!data.dateOverrides)result.dateOverrides={};
     if(!Object.prototype.hasOwnProperty.call(data,'scheduleAnchor')&&(result.startDate!=='2026-11-17'||Object.keys(data.completed||{}).some(index=>Number(index)>=2)))result.scheduleAnchor=null;
     if(result.demo)result.source='demo';
@@ -18,6 +19,7 @@
     if(result.source==='bundled'&&window.BOOK_WORDS?.length)result.lexicon=window.BOOK_WORDS;
     else if(!result.demo&&!result.lexicon.length&&window.BOOK_WORDS?.length){result.lexicon=window.BOOK_WORDS;result.source='bundled';}
     if(data.scheduleVersion!==2)result=C.migrateLegacyState({...result,scheduleVersion:1});
+    if(!Object.prototype.hasOwnProperty.call(data,'makeups'))result.makeups=C.inferMakeups(C.buildSessions(result.startDate,result.dateOverrides,result.scheduleAnchor),result.completed);
     return result;
   }
   function load() {
@@ -25,7 +27,7 @@
       const data=JSON.parse(localStorage.getItem(STORAGE_KEY)||'null');
       if(!data||data.version!==1)return blankState();
       const result=prepareState(data);
-      if(data.scheduleVersion!==2||!Object.prototype.hasOwnProperty.call(data,'scheduleAnchor')){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(result));}catch{}}
+      if(data.scheduleVersion!==2||!Object.prototype.hasOwnProperty.call(data,'scheduleAnchor')||!Object.prototype.hasOwnProperty.call(data,'makeups')){try{localStorage.setItem(STORAGE_KEY,JSON.stringify(result));}catch{}}
       return result;
     } catch { return blankState(); }
   }
@@ -42,6 +44,10 @@
   const sessionWords=(session)=>{ const keys=new Set(session.lists.map(l=>`${l.band}-${l.list}`)); return words().filter(w=>keys.has(`${w.band}-${w.list}`)); };
   const nextSession=()=>sessions().find(s=>!state.completed[s.index]);
   const isDue=(date)=>date<=C.dateKey(new Date());
+  const makeupStatus=(session,today=C.dateKey(new Date()))=>C.makeupStatus(session.date,today,state.makeups);
+  const makeupDeadline=session=>C.dateKey(C.addDays(C.parseDate(session.date),2));
+  const completedAsMakeup=session=>Number(state.makeups[session.week]?.sessionIndex)===session.index;
+  function sessionActionLabel(session){const status=makeupStatus(session);return status==='available'?'补卡听写':status==='used'||status==='expired'?'逾期补做':'开始听写';}
   const stat=(id)=>state.stats[id]||(state.stats[id]={seen:0,correct:0,mistakes:0,skips:0,reviewCount:0,focus:false,focusReasons:[]});
   const focusWords=()=>words().filter(w=>state.stats[w.id]?.focus).sort((a,b)=>(state.stats[b.id]?.mistakes||0)-(state.stats[a.id]?.mistakes||0));
   const remainingReviews=()=>studiedWords().reduce((sum,w)=>sum+Math.max(0,C.goalFor(state.stats[w.id])-(state.stats[w.id]?.reviewCount||0)),0);
@@ -122,9 +128,9 @@
   function statCard(label,value,unit,bottom){return `<div class="stat-card"><div class="stat-label">${label}</div><div class="stat-value">${value}<span class="stat-unit">${unit}</span></div><div class="stat-bottom">${bottom}</div></div>`;}
   function todayMini(){
     const today=C.dateKey(new Date()), week=C.mondayKey(new Date()), weekSessions=sessions().filter(s=>s.week===week);
-    const rows=weekSessions.map(s=>({date:s.date,label:`第 ${s.index+1} 次听写`,sub:shortLists(s.lists),done:!!state.completed[s.index],active:s.date===today,exception:s.date!==s.regularDate}));
+    const rows=weekSessions.map(s=>({isSession:true,date:s.date,label:`第 ${s.index+1} 次听写`,sub:shortLists(s.lists),done:!!state.completed[s.index],unlocked:s.index===nextSession()?.index,madeUp:completedAsMakeup(s),makeup:makeupStatus(s,today),active:s.date===today,exception:s.date!==s.regularDate}));
     rows.push({date:C.sundayKey(week),label:'周日随机抽查',sub:'本周词汇中抽取 200 词',done:!!state.sundays[week],active:C.sundayKey(week)===today});
-    return rows.map(r=>`<div class="schedule-item ${r.active?'active':''}"><div class="day-badge">${prettyDate(r.date).replace('月','/').replace('日','')}<small>${dayName(r.date)}</small></div><div class="schedule-info"><b>${r.label}</b><small>${esc(r.sub)}</small></div><span class="state">${r.done?'已完成':r.active?'今天':r.exception?'已改期':'待开始'}</span></div>`).join('');
+    return rows.map(r=>`<div class="schedule-item ${r.active?'active':''}"><div class="day-badge">${prettyDate(r.date).replace('月','/').replace('日','')}<small>${dayName(r.date)}</small></div><div class="schedule-info"><b>${r.label}</b><small>${esc(r.sub)}</small></div><span class="state">${r.done?r.madeUp?'已补卡':'已完成':r.isSession&&r.makeup!=='future'&&!r.unlocked?'待前序完成':r.active?'今天':r.makeup==='available'?'可补卡':r.makeup==='used'||r.makeup==='expired'?'待补做':r.exception?'已改期':'待开始'}</span></div>`).join('');
   }
   function renderHome(){
     const current=nextSession(), loaded=words().length, totalLists=state.demo?4:70, doneLists=Object.keys(state.completedLists).length, focus=focusWords().length;
@@ -136,6 +142,25 @@
     const historyNotice=state.migratedLegacy&&doneLists?`<div class="notice"><span class="notice-icon">✓</span><div><b>历史记录已保留</b>　原来完成的 ${doneLists} 个 List 和 ${Object.keys(state.stats).length} 条单词练习记录已计入新计划。</div></div>`:'';
     const browserNotice=!doneLists&&Object.keys(state.stats).length?`<div class="notice"><span class="notice-icon">ⓘ</span><div><b>此浏览器尚无已完成的听写</b>　如果你在其他浏览器练习过，请点击“恢复个人进度”选择备份 JSON；当前错词会合并保留。</div></div>`:'';
     root.innerHTML=`<div class="page-head"><div><div class="eyebrow">YOUR LEARNING DESK</div><h1 class="page-title">把每一个词，练成下意识。</h1><p class="page-subtitle">${state.scheduleAnchor?'6 分词汇 List 5–6 改至 11 月 24 日；后续按周二、四、六顺延。':firstException?'首场改至 11 月 18 日（周三）；其余听写日期不变。':'周二 · 周四 · 周六听写，周日回顾；让进步看得见。'}</p></div><div class="head-actions"><button class="button secondary" data-action="restore-backup">恢复个人进度</button><button class="button secondary" data-action="go-schedule">查看完整计划 →</button></div></div>${datasetNotice}${historyNotice}${browserNotice}<div class="stat-row">${statCard('已完成 List',doneLists,totalLists===4?' / 4':' / 70','6 分 2 个 · 7 分 4 个')}${statCard('已练习词汇',studiedWords().length,'词',`词表已载入 ${loaded} 词`)}${statCard('重点复习册',focus,'词','错两次 / 停留超一分钟')}${statCard('待补足复习',remainingReviews(),'次','每词目标 6 次，重点词 7 次')}</div><div class="home-grid"><section class="card hero-card"><div class="hero-top"><span class="hero-dot"></span> ${state.run?'进行中':!loaded?'准备开始':'下一次听写'}</div><h2>${heroTitle}</h2><p>${heroText}</p><div class="hero-actions">${heroAction}</div><div class="progress-wrap"><div class="progress-track"><div class="progress-fill" style="width:${Math.round(doneLists/totalLists*100)}%"></div></div><div class="progress-meta"><span>学习进度</span><span>${doneLists} / ${totalLists} List</span></div></div></section><section class="card panel"><div class="panel-title-row"><h3>本周节奏</h3><span class="panel-sub">TUE / THU / SAT / SUN</span></div><div class="schedule-mini">${todayMini()||'<p class="field-note">计划从所选开始日期启动。</p>'}</div></section></div><div class="section-head"><div><h2>保持记忆在线</h2><p>几种练法，照顾不同状态的你。</p></div></div><div class="bottom-grid"><section class="card feature-card"><span class="feature-icon">✧</span><div class="feature-body"><b>周日 · 200 词抽查</b><p>从本周已听写的词里抽取，反复出错词提高抽中机会。</p></div><button class="feature-arrow" data-action="go-schedule" aria-label="查看周日抽查">↗</button></section><section class="card feature-card green"><span class="feature-icon">◎</span><div class="feature-body"><b>重点 · 强化复习</b><p>每次额外练 3–5 个旧词；强化训练补足个人复习目标。</p></div><button class="feature-arrow" data-action="go-focus" aria-label="查看重点复习">↗</button></section></div><div class="footer-note">周日抽查在有本周已完成听写时开放。词汇与进度保存在当前浏览器，建议定期导出备份。</div>`;
+    const today=C.dateKey(new Date()), status=current?makeupStatus(current,today):null;
+    const thisWeek=C.mondayKey(new Date()), usedThisWeek=state.makeups[thisWeek];
+    let makeupTitle=usedThisWeek?'本周补卡已使用':'本周可补卡 1 次';
+    let makeupText='错过听写后，可在原定日期的随后两天内补卡；正式听写日期照常进行。';
+    if(current&&status==='available'){
+      makeupTitle=`第 ${current.index+1} 次听写可补卡`;
+      makeupText=`原定 ${prettyDate(current.date)}，请在 ${fullDate(makeupDeadline(current))} 结束前完成。补卡计入原定周的 1 次机会。`;
+    }else if(current&&status==='used'){
+      makeupTitle='本场所属周的补卡已使用';
+      makeupText='仍可逾期补做这场听写，学习进度会照常保存。';
+    }else if(current&&status==='expired'){
+      makeupTitle='本场补卡期限已过';
+      makeupText='仍可逾期补做这场听写，学习进度会照常保存。';
+    }else if(current&&status==='today'&&!usedThisWeek){
+      makeupText=`若今天无法完成第 ${current.index+1} 次听写，可在 ${fullDate(makeupDeadline(current))} 结束前补卡。`;
+    }
+    root.querySelector('.page-head').insertAdjacentHTML('afterend',`<div class="notice"><span class="notice-icon">↺</span><div><b>${makeupTitle}</b>　${makeupText}</div></div>`);
+    const startButton=root.querySelector('.hero-actions [data-action="start-session"]');
+    if(startButton&&!startButton.disabled&&current&&status!=='today')startButton.textContent=`${sessionActionLabel(current)}第 ${current.index+1} 次 ↗`;
   }
   function renderFocus(){
     const all=studiedWords(), focus=focusWords(), covered=all.filter(w=>(state.stats[w.id]?.reviewCount||0)>=C.goalFor(state.stats[w.id])).length, remaining=remainingReviews();
@@ -152,6 +177,23 @@
       if(row.type==='session'){const s=row.s,done=!!state.completed[s.index],n=sessionWords(s).length,available=n&&isDue(s.date)&&s.index===nextSession()?.index&&!state.run;return `<div class="schedule-row"><div class="date">${prettyDate(s.date)}<small>${dayName(s.date)}</small></div><div>第 ${s.index+1} 次听写</div><div class="lists">${esc(shortLists(s.lists))}<div class="num">${n} 词</div></div><div class="${done?'done':'pending'}">${done?'✓ 已完成':s.date===today?'今天':s.date!==s.regularDate?'已改期':'待开始'}</div><div>${done?'<span class="panel-sub">已完成</span>':`<button class="button secondary small" data-action="start-session" data-index="${s.index}" ${available?'':'disabled'}>${available?'开始听写':'按计划解锁'}</button>`}</div></div>`;}
       const pool=weeklyWords(row.week),done=!!state.sundays[row.week],n=Math.min(200,pool.length),available=n&&isDue(row.date)&&!state.run;return `<div class="schedule-row"><div class="date">${prettyDate(row.date)}<small>周日</small></div><div>本周随机抽查</div><div class="lists">已听写词汇中抽取<div class="num">${n} / 200 词可抽</div></div><div class="${done?'done':'pending'}">${done?'✓ 已完成':'待开始'}</div><div>${done?'<span class="panel-sub">已完成</span>':`<button class="button secondary small" data-action="start-sunday" data-week="${row.week}" ${available?'':'disabled'}>${available?'开始抽查':'周日开放'}</button>`}</div></div>`;
     }).join('')}</div><p class="footer-note">若当周已听写词汇不足 200 个，会抽取全部可用词。出错较多的词拥有更高抽中概率；每词达到复习目标后不再进入新抽查。</p>`;
+    root.querySelector('.notice div').append(' 每周按原定听写日期计算，可在次日或第二日使用一次补卡；过期仍可补做，后续日期不顺延。');
+    const tableRows=[...root.querySelectorAll('.schedule-row:not(.header)')];
+    timeline.forEach((entry,i)=>{
+      if(entry.type!=='session')return;
+      const session=entry.s,row=tableRows[i],statusEl=row.querySelector('.done,.pending');
+      if(state.completed[session.index]){
+        if(completedAsMakeup(session))statusEl.textContent='✓ 已补卡';
+        else if(C.dateKey(new Date(Number(state.completed[session.index])))>session.date)statusEl.textContent='✓ 已补做';
+        return;
+      }
+      const status=makeupStatus(session,today);
+      if(status!=='future'&&session.index!==nextSession()?.index){statusEl.textContent='待前序完成';return;}
+      if(status==='available')statusEl.textContent='可补卡';
+      else if(status==='used'||status==='expired')statusEl.textContent='待补做';
+      const button=row.querySelector('[data-action="start-session"]');
+      if(button&&!button.disabled){button.textContent=sessionActionLabel(session);if(status==='available')button.title=`请在 ${fullDate(makeupDeadline(session))} 结束前完成`;}
+    });
   }
   function renderLibrary(){
     const listCounts=Array.from({length:70},(_,i)=>{const m=C.listMeta(i);return words().filter(w=>w.band===m.band&&w.list===m.list).length;});
@@ -172,6 +214,11 @@
     const mode=state.mode,progress=Math.round(run.index/run.queue.length*100),title=run.type==='session'?`第 ${run.sessionIndex+1} 次听写`:run.type==='sunday'?'周日随机抽查':'强化复习';
     const prompt=mode==='meaning'?`<div class="quiz-prompt">${esc(w.chinese)}</div>`:`<div class="quiz-prompt audio-mode">听发音，拼出这个单词</div><button class="speak-button" data-action="speak-current">▶　播放英语读音</button>`;
     root.innerHTML=`<div class="page-head"><div><div class="eyebrow">LISTEN · SPELL · REMEMBER</div><h1 class="page-title">${title}</h1><p class="page-subtitle">${run.type==='session'?esc(shortLists(run.legacyLists||sessions()[run.sessionIndex]?.lists||[])):'每一遍都在加深记忆。'}</p></div><button class="button secondary" data-action="quit-run">暂存并返回</button></div><div class="dictation-layout"><section class="card quiz-card"><div class="quiz-top"><div class="quiz-count">第 ${run.index+1} / ${run.queue.length} 题 · ${item.type==='new'?'本次新词':'旧词复习'}</div><div class="mode-pill" role="group" aria-label="听写模式"><button data-action="mode" data-mode="meaning" class="${mode==='meaning'?'active':''}">中文释义</button><button data-action="mode" data-mode="audio" class="${mode==='audio'?'active':''}">听音拼写</button></div></div><div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div><div class="quiz-overline">${mode==='meaning'?'根据释义拼写英文':'LISTEN & SPELL'}</div>${prompt}${voiceControls()}<div class="answer-label">你的答案</div><input id="answer" class="answer-input" type="text" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="输入英文单词" placeholder="在这里输入英文单词 …"><div class="answer-actions"><button class="button primary" data-action="submit">确认答案 ↗</button><button class="button secondary" data-action="skip">想不起来，下一题</button></div><div id="quiz-feedback" class="quiz-feedback" aria-live="polite"></div></section><aside class="card quiz-side"><h3>这一题</h3><div class="quiz-fact"><span>来自</span><b>${state.demo?'示例 · ':''}${w.band}分词汇 · List ${w.list}</b></div><div class="quiz-fact"><span>当前题已停留</span><b id="timer">0 秒</b></div><div class="quiz-fact"><span>本题拼写错误</span><b id="mistake-count">${run.mistakes} 次</b></div><div class="quiz-fact"><span>复习进度</span><b>${state.stats[w.id]?.reviewCount||0} / ${C.goalFor(state.stats[w.id])} 次</b></div><div id="focus-trigger" class="hint-card">拼错会清空输入，让你重新拼写。连续错两次、停留一分钟或跳过，会自动加入重点复习册。</div></aside></div>`;
+    if(run.type==='session'){
+      const session=sessions()[run.sessionIndex],status=session&&makeupStatus(session);
+      if(status==='available')root.querySelector('.page-head').insertAdjacentHTML('afterend',`<div class="notice"><span class="notice-icon">↺</span><div><b>补卡进行中</b>　请在 ${fullDate(makeupDeadline(session))} 结束前完成，才会计入本场所属周的补卡。</div></div>`);
+      else if(status==='used'||status==='expired')root.querySelector('.page-head').insertAdjacentHTML('afterend','<div class="notice"><span class="notice-icon">ⓘ</span><div>本场将记为逾期补做，单词进度仍会保存。</div></div>');
+    }
     const input=document.getElementById('answer');input.focus();
     if(mode==='audio')setTimeout(()=>{if(state.run===run&&run.index===state.run.index)speak(w);},230);
     updateTimer();
@@ -210,8 +257,14 @@
   }
   function advance(){const run=state.run;if(!run)return;run.index++;run.mistakes=0;run.cardStarted=Date.now();save();if(run.index>=run.queue.length)finishRun();else if(view==='quiz')renderQuiz();else render();}
   function finishRun(){const run=state.run;if(!run)return;
+    let sessionResult='normal';
     if(run.type==='session'){
       const finishedAt=Date.now();
+      const session=sessions()[run.sessionIndex],status=session?makeupStatus(session):'today';
+      if(status==='available'){
+        state.makeups[session.week]={sessionIndex:run.sessionIndex,completedAt:finishedAt};
+        sessionResult='makeup';
+      }else if(status==='used'||status==='expired')sessionResult='late';
       const lists=run.legacyLists||sessions()[run.sessionIndex]?.lists||[];
       for(const list of lists)state.completedLists[`${list.band}-${list.list}`]=finishedAt;
       for(const session of sessions()){
@@ -221,7 +274,7 @@
       }
     }
     if(run.type==='sunday')state.sundays[run.week]=Date.now();
-    state.lastSummary={title:run.type==='session'?`第 ${run.sessionIndex+1} 次听写完成`:run.type==='sunday'?'本周抽查完成':'强化复习完成',total:run.queue.length,firstTry:run.firstTry,skipped:run.skipped};
+    state.lastSummary={title:run.type==='session'?`${sessionResult==='makeup'?'补卡成功 · ':sessionResult==='late'?'逾期补做 · ':''}第 ${run.sessionIndex+1} 次听写完成`:run.type==='sunday'?'本周抽查完成':'强化复习完成',total:run.queue.length,firstTry:run.firstTry,skipped:run.skipped,sessionResult};
     state.run=null;save();navigate('finish');
   }
   function submit(){
@@ -246,7 +299,7 @@
       save();toast(`进度已合并：${Object.keys(state.completedLists).length} 个 List、${focusWords().length} 个重点词。`);navigate('home');return;
     }
     if(state.run){toast('请先完成当前听写，再更换词表。');return;}
-    try{const result=C.parseLexicon(text,name);const prev=state.stats;state.lexicon=result.words;state.source='custom';state.demo=false;state.stats=Object.fromEntries(result.words.filter(w=>prev[w.id]).map(w=>[w.id,prev[w.id]]));state.completed={};state.completedLists={};state.sundays={};state.run=null;state.lastSummary=null;save();closeModal();toast(`已导入 ${result.words.length} 词、${result.listCount} 个 List${result.issues.length?`；跳过 ${result.issues.length} 行`:''}。`);navigate('library');}
+    try{const result=C.parseLexicon(text,name);const prev=state.stats;state.lexicon=result.words;state.source='custom';state.demo=false;state.stats=Object.fromEntries(result.words.filter(w=>prev[w.id]).map(w=>[w.id,prev[w.id]]));state.completed={};state.completedLists={};state.sundays={};state.makeups={};state.run=null;state.lastSummary=null;save();closeModal();toast(`已导入 ${result.words.length} 词、${result.listCount} 个 List${result.issues.length?`；跳过 ${result.issues.length} 行`:''}。`);navigate('library');}
     catch(error){toast(`导入失败：${error.message}`);}
   }
   function openPaste(){document.getElementById('modal-root').innerHTML=`<div class="modal-overlay"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title"><div class="modal-head"><h2 id="modal-title">粘贴词表</h2><button class="icon-button" data-action="close-modal" aria-label="关闭">×</button></div><p>第一行需要表头：band,list,english,chinese。可粘贴 CSV、制表符分隔内容或 JSON 词条数组。</p><textarea id="paste-data" class="field" placeholder="band,list,english,chinese&#10;6,1,example,例子"></textarea><div class="modal-actions"><button class="button secondary" data-action="close-modal">取消</button><button class="button primary" data-action="import-paste">导入词表</button></div></div></div>`;document.getElementById('paste-data').focus();}
@@ -267,7 +320,7 @@
   document.getElementById('mobile-menu').addEventListener('click',()=>document.querySelector('.sidebar').classList.toggle('open'));
   document.addEventListener('keydown',e=>{if(e.key==='Enter'&&e.target.id==='answer'){e.preventDefault();submit();}if(e.key==='Escape')closeModal();});
   document.addEventListener('change',e=>{
-    if(e.target.id==='start-date'&&e.target.value&&!Object.keys(state.completed).length){state.startDate=e.target.value;state.dateOverrides={};state.scheduleAnchor=null;save();render();}
+    if(e.target.id==='start-date'&&e.target.value&&!Object.keys(state.completed).length){state.startDate=e.target.value;state.dateOverrides={};state.scheduleAnchor=null;state.makeups={};save();render();}
     if(e.target.id==='batch-size'){state.batchSize=Number(e.target.value);save();}
     if(e.target.id==='file-import'){const file=e.target.files?.[0];if(!file)return;if(!/\.(csv|tsv|txt|json)$/i.test(file.name)){toast('站点支持 CSV、TSV、JSON；Excel 或 PDF 请上传到聊天。');return;}const reader=new FileReader();reader.onload=()=>importText(String(reader.result||''),file.name);reader.onerror=()=>toast('无法读取文件。');reader.readAsText(file,'utf-8');}
   });
